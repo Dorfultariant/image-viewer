@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(iv VERSION 1.0 LANGUAGES CXX)
+project(iv LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -17,8 +17,7 @@ target_link_libraries(iv PRIVATE
     SDL3_image::SDL3_image
 )
 
-if(MSVC)
-    target_compile_options(iv PRIVATE /W4)
-else()
-    target_compile_options(iv PRIVATE -Wall -Wextra -Wpedantic)
-endif()
+install(
+    TARGETS iv
+    RUNTIME DESTINATION bin
+)

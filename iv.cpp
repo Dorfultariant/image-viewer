@@ -4,6 +4,7 @@
 #include <SDL3/SDL_keycode.h>
 #include <SDL3_image/SDL_image.h>
 
+#include <cmath>
 #include <cstddef>
 #include <iostream>
 #include <string>
@@ -13,27 +14,43 @@ struct ViewerState {
   SDL_Window *window = nullptr;
   SDL_Renderer *renderer = nullptr;
   SDL_Texture *texture = nullptr;
-
   std::vector<std::string> images;
-
   std::size_t current_index = 0;
-
   float image_width = 0.0f;
   float image_height = 0.0f;
-
   bool fit_to_window = true;
   float zoom = 1.0f;
   float target_zoom = 1.0f;
-
   float pan_x = 0.0f;
   float pan_y = 0.0f;
+  float rotation = 0.0f;
+  bool flip_horizontal = false;
+  bool flip_vertical = false;
 };
 
-static bool load_image(ViewerState &state) {
-  // float zoom = 1.0f;
-  // float target_zoom = 1.0f;
-  // bool fit_to_window = true;
+static void reset_transforms(ViewerState &state) {
+  state.pan_x = 0.0f;
+  state.pan_y = 0.0f;
+  state.zoom = 1.0f;
+  state.target_zoom = 1.0f;
+  state.rotation = 0.0f;
+  state.flip_horizontal = false;
+  state.flip_vertical = false;
+}
 
+static bool is_right_angle_rotation(float rotation) {
+  int angle = static_cast<int>(std::round(rotation));
+
+  angle %= 360;
+
+  if (angle < 0) {
+    angle += 360;
+  }
+
+  return angle == 90 || angle == 270;
+}
+
+static bool load_image(ViewerState &state) {
   if (state.images.empty()) {
     return false;
   }
@@ -81,6 +98,8 @@ static void next_image(ViewerState &state) {
   state.current_index = (state.current_index + 1) % state.images.size();
 
   load_image(state);
+
+  reset_transforms(state);
 }
 
 static void previous_image(ViewerState &state) {
@@ -95,6 +114,7 @@ static void previous_image(ViewerState &state) {
   }
 
   load_image(state);
+  reset_transforms(state);
 }
 
 static void render(ViewerState &state) {
@@ -113,10 +133,15 @@ static void render(ViewerState &state) {
   SDL_RenderClear(state.renderer);
 
   if (state.texture) {
-    float fit_scale =
-        std::min(static_cast<float>(window_width) / state.image_width,
+    float fit_width = state.image_width;
+    float fit_height = state.image_height;
 
-                 static_cast<float>(window_height) / state.image_height);
+    if (is_right_angle_rotation(state.rotation)) {
+      std::swap(fit_width, fit_height);
+    }
+
+    float fit_scale = std::min(static_cast<float>(window_width) / fit_width,
+                               static_cast<float>(window_height) / fit_height);
 
     if (fit_scale > 1.0f) {
       fit_scale = 1.0f;
@@ -138,7 +163,18 @@ static void render(ViewerState &state) {
     dst.x = (window_width - dst.w) * 0.5f + state.pan_x;
     dst.y = (window_height - dst.h) * 0.5f + state.pan_y;
 
-    SDL_RenderTexture(state.renderer, state.texture, nullptr, &dst);
+    SDL_FlipMode flip = SDL_FLIP_NONE;
+
+    if (state.flip_horizontal && state.flip_vertical) {
+      flip = static_cast<SDL_FlipMode>(SDL_FLIP_HORIZONTAL | SDL_FLIP_VERTICAL);
+    } else if (state.flip_horizontal) {
+      flip = SDL_FLIP_HORIZONTAL;
+    } else if (state.flip_vertical) {
+      flip = SDL_FLIP_VERTICAL;
+    }
+
+    SDL_RenderTextureRotated(state.renderer, state.texture, nullptr, &dst,
+                             state.rotation, nullptr, flip);
   }
 
   SDL_RenderPresent(state.renderer);
@@ -227,13 +263,6 @@ int main(int argc, char *argv[]) {
       fit_scale = 1.0f;
     }
 
-    float render_scale =
-        state.fit_to_window ? fit_scale * state.zoom : state.zoom;
-
-    float move_step_x = state.image_width * render_scale * 0.05f;
-
-    float move_step_y = state.image_height * render_scale * 0.05f;
-
     switch (event.type) {
     case SDL_EVENT_QUIT:
       running = false;
@@ -243,8 +272,35 @@ int main(int argc, char *argv[]) {
       /* Image movement event handling */
       SDL_Keymod mods = SDL_GetModState();
       bool shift = (mods & SDL_KMOD_SHIFT);
+      bool ctrl = (mods & SDL_KMOD_CTRL);
+
+      if (ctrl) {
+        switch (event.key.key) {
+        case SDLK_H:
+        case SDLK_LEFT:
+          state.rotation -= 90.0f;
+          break;
+
+        case SDLK_L:
+        case SDLK_RIGHT:
+          state.rotation += 90.0f;
+          break;
+
+        default:
+          break;
+        }
+
+        break;
+      }
 
       if (shift) {
+        float render_scale =
+            state.fit_to_window ? fit_scale * state.zoom : state.zoom;
+
+        float move_step_x = state.image_width * render_scale * 0.05f;
+
+        float move_step_y = state.image_height * render_scale * 0.05f;
+
         switch (event.key.key) {
         case SDLK_H:
         case SDLK_LEFT:
@@ -262,13 +318,21 @@ int main(int argc, char *argv[]) {
         case SDLK_DOWN:
           state.pan_y += move_step_y;
           break;
+        case SDLK_M:
+          state.flip_horizontal = !state.flip_horizontal;
+          break;
         default:
           break;
         }
-      } else {
+      } else { // Non-modifier keys
         switch (event.key.key) {
+        case SDLK_Q:
         case SDLK_ESCAPE:
           running = false;
+          break;
+
+        case SDLK_M:
+          state.flip_vertical = !state.flip_vertical;
           break;
 
         case SDLK_LEFT:
@@ -317,6 +381,11 @@ int main(int argc, char *argv[]) {
           state.target_zoom = 1.0f;
           state.pan_x = 0.0f;
           state.pan_y = 0.0f;
+          break;
+
+          // RESET TRANSFORMS TO DEFAULTS
+        case SDLK_0:
+          reset_transforms(state);
           break;
         }
       }
